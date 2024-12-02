@@ -167,7 +167,7 @@ void get_trailer_link(Movie *movie) {
                 const char *key = json_string_value(json_object_get(json_array_get(results, 0), "key"));
                 if (key != NULL) {
                     movie->trailer_link = malloc(256);
-                    snprintf(movie->trailer_link, 256, "https://www.youtube.com/watch?v=%s", key);
+                    snprintf(movie->trailer_link, 256, "https://www.youtube.com/watch?v=%s \n", key);
                 }
             }
 
@@ -193,17 +193,18 @@ void show_recommend_movie(Movie *movies, size_t num_movies) {
     int random_index = rand() % num_movies;
 
     // 추천 영화 출력
-    printf("\n\n---------------------------------\n");
+    printf("\n\n--------------------------------------\n");
     printf("오늘의 추천 영화 😊\n");
+    printf("--------------------------------------\n");
     printf("오늘 '%s', 어떠세요?\n", movies[random_index].title);
 
     // 예고편 링크 출력
     get_trailer_link(&movies[random_index]);
     if (movies[random_index].trailer_link != NULL) {
-        printf("▼ 예고편을 감상해보세요! \n");
+        printf("\n▼ 예고편을 감상해보세요! \n");
         printf("%s\n", movies[random_index].trailer_link);
     } else {
-        printf("예고편을 찾을 수 없습니다.\n");
+        printf("이 영화는 예고편이 제공되어있지 않아요 ㅜ.ㅜ.\n");
     }
 }
 
