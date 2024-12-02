@@ -9,6 +9,7 @@
 typedef struct {
     char *title;        // 영화 제목
     char *trailer_link; // 예고편 링크
+    int id;             // 영화 ID
 } Movie;
 
 // 응답 데이터를 저장할 구조체
@@ -94,21 +95,18 @@ int get_tmdb_data(Movie **movies, size_t *num_movies) {
                 for (size_t i = 0; i < *num_movies; i++) {
                     json_t *movie_json = json_array_get(results, i);
                     const char *title = json_string_value(json_object_get(movie_json, "title"));
+                    int id = (int)json_integer_value(json_object_get(movie_json, "id"));
 
-                    // 영화 제목을 movies 배열에 저장
+                    // 영화 제목과 ID를 movies 배열에 저장
                     (*movies)[i].title = strdup(title);
+                    (*movies)[i].id = id;
                     if ((*movies)[i].title == NULL) {
                         fprintf(stderr, "Memory allocation failed for movie title at index %zu\n", i);
                         json_decref(root);
                         return 1;
                     }
 
-                    (*movies)[i].trailer_link = strdup("예고편 링크 (현재는 TMDb API에서 제공되지 않음)");
-                    if ((*movies)[i].trailer_link == NULL) {
-                        fprintf(stderr, "Memory allocation failed for trailer link at index %zu\n", i);
-                        json_decref(root);
-                        return 1;
-                    }
+                    (*movies)[i].trailer_link = NULL;
                 }
             }
 
@@ -121,6 +119,66 @@ int get_tmdb_data(Movie **movies, size_t *num_movies) {
     free(chunk.memory);
     curl_global_cleanup();
     return 0;
+}
+// 영화 예고편을 가져오는 함수
+void get_trailer_link(Movie *movie) {
+    CURL *curl;
+    CURLcode res;
+    struct MemoryStruct chunk;
+
+    chunk.memory = malloc(1);  // 응답 데이터를 저장할 메모리 할당
+    chunk.size = 0;  // 초기화
+
+    const char *api_key = getenv("TMDB_API_KEY");
+    if (api_key == NULL) {
+        printf("API Key not found\n");
+        return;
+    }
+
+    char url[512];
+    snprintf(url, sizeof(url), "https://api.themoviedb.org/3/movie/%d/videos?api_key=%s&language=ko-KR", movie->id, api_key);
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    curl = curl_easy_init();
+
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &chunk);
+
+        res = curl_easy_perform(curl);
+
+        if (res != CURLE_OK) {
+            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        } else {
+            // JSON 파싱
+            json_error_t error;
+            json_t *root = json_loads(chunk.memory, 0, &error);
+
+            if (!root) {
+                fprintf(stderr, "JSON decoding failed: %s\n", error.text);
+                free(chunk.memory);
+                return;
+            }
+
+            json_t *results = json_object_get(root, "results");
+            if (json_is_array(results) && json_array_size(results) > 0) {
+                // 첫 번째 예고편의 key를 가져와서 YouTube 링크 생성
+                const char *key = json_string_value(json_object_get(json_array_get(results, 0), "key"));
+                if (key != NULL) {
+                    movie->trailer_link = malloc(256);
+                    snprintf(movie->trailer_link, 256, "https://www.youtube.com/watch?v=%s", key);
+                }
+            }
+
+            json_decref(root);
+        }
+
+        curl_easy_cleanup(curl);
+    }
+
+    free(chunk.memory);
+    curl_global_cleanup();
 }
 
 // 랜덤으로 추천 영화를 출력하는 함수
@@ -138,6 +196,15 @@ void show_recommend_movie(Movie *movies, size_t num_movies) {
     printf("\n\n---------------------------------\n");
     printf("오늘의 추천 영화 😊\n");
     printf("오늘 '%s', 어떠세요?\n", movies[random_index].title);
+
+    // 예고편 링크 출력
+    get_trailer_link(&movies[random_index]);
+    if (movies[random_index].trailer_link != NULL) {
+        printf("▼ 예고편을 감상해보세요! \n");
+        printf("%s\n", movies[random_index].trailer_link);
+    } else {
+        printf("예고편을 찾을 수 없습니다.\n");
+    }
 }
 
 int main() {
