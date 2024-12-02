@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include "recommend_movie.h"
 
 void show_search_menu() {
     printf("\n\n------------------------------------\n");
@@ -8,14 +9,7 @@ void show_search_menu() {
     // 검색 기능 구현
 }
 
-void show_recommended_movie() {
-    printf("\n\n---------------------------------\n");
-    printf("오늘의 추천 영화 😊\n");
-    printf("오늘 '영화이름', 어떠세요?\n");
-    printf("▼ 예고편을 감상해보세요! \n");
-    printf("예고편 링크 \n");
-    // 추천 영화에 대한 추가 기능 구현
-}
+void show_recommend_movie();
 
 void show_movie_list() {
     printf("\n나중에 볼 영화목록\n");
