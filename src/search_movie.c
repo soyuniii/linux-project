@@ -72,14 +72,22 @@ void search_movie(const char *api_key, const char *query, int pipe_fd) {
     chunk.memory = malloc(1); // 초기 메모리 할당
     chunk.size = 0;
 
-    // TMDB API URL 설정
-    char url[512];
-    snprintf(url, sizeof(url), "https://api.themoviedb.org/3/search/movie?api_key=%s&query=%s&language=ko-KR", api_key, query);
-
     curl_global_init(CURL_GLOBAL_DEFAULT);
     curl = curl_easy_init();
 
     if (curl) {
+        // URL 인코딩
+        char *encoded_query = curl_easy_escape(curl, query, 0);
+        if (!encoded_query) {
+            fprintf(stderr, "URL 인코딩 실패\n");
+            curl_easy_cleanup(curl);
+            return;
+        }
+
+        // TMDB API URL 설정
+        char url[512];
+        snprintf(url, sizeof(url), "https://api.themoviedb.org/3/search/movie?api_key=%s&query=%s&language=ko-KR", api_key, encoded_query);
+
         curl_easy_setopt(curl, CURLOPT_URL, url);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
@@ -90,13 +98,17 @@ void search_movie(const char *api_key, const char *query, int pipe_fd) {
         if (res == CURLE_OK) {
             write(pipe_fd, chunk.memory, chunk.size); // 파이프에 결과 쓰기
         } else {
-            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+            fprintf(stderr, "curl_easy_perform() 실패: %s\n", curl_easy_strerror(res));
         }
+
+        curl_free(encoded_query); // URL 인코딩된 문자열 해제
         curl_easy_cleanup(curl);
     }
     free(chunk.memory); // 메모리 해제
     curl_global_cleanup();
 }
+
+
 
 // 영화 상세 정보를 표시하는 함수
 void display_movie_details(const char *json_data, const char *api_key) {
