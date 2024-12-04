@@ -1,34 +1,10 @@
-// 영화 검색 및 상세 정보 출력
-
-#include <stdio.h>
+/#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/wait.h>
 #include <curl/curl.h>
 #include <jansson.h>
-
-// 응답 데이터를 저장할 구조체
-struct MemoryStruct {
-    char *memory;
-    size_t size;
-};
-
-// 응답 데이터를 저장하는 콜백 함수
-size_t WriteMemoryCallback(void *ptr, size_t size, size_t nmemb, void *data) {
-    size_t realsize = size * nmemb;
-    struct MemoryStruct *mem = (struct MemoryStruct *)data;
-
-    mem->memory = realloc(mem->memory, mem->size + realsize + 1);
-    if (mem->memory == NULL) {
-        printf("Not enough memory!\n");
-        return 0;
-    }
-
-    memcpy(&(mem->memory[mem->size]), ptr, realsize);
-    mem->size += realsize;
-    mem->memory[mem->size] = 0;
-
-    return realsize;
-}
 
 // 영화 예고편 URL 가져오기
 void get_movie_trailer(const char *api_key, int movie_id) {
@@ -36,7 +12,7 @@ void get_movie_trailer(const char *api_key, int movie_id) {
     CURLcode res;
     struct MemoryStruct chunk;
 
-    chunk.memory = malloc(1);
+    chunk.memory = malloc(1); // 초기 메모리 할당
     chunk.size = 0;
 
     // TMDB API URL 설정
@@ -51,54 +27,49 @@ void get_movie_trailer(const char *api_key, int movie_id) {
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
 
-        // API 요청 실행
+        // CURL 요청 실행
         res = curl_easy_perform(curl);
 
-        if (res != CURLE_OK) {
-            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-        } else {
+        if (res == CURLE_OK) {
             json_error_t error;
-            json_t *root = json_loads(chunk.memory, 0, &error);
+            json_t *root = json_loads(chunk.memory, 0, &error); // JSON 파싱
 
-            if (!root) {
-                fprintf(stderr, "JSON decoding failed: %s\n", error.text);
-                free(chunk.memory);
-                curl_easy_cleanup(curl);
-                return;
-            }
+            if (root) {
+                json_t *results = json_object_get(root, "results"); // "results" 배열 가져오기
+                if (json_is_array(results) && json_array_size(results) > 0) {
+                    json_t *video = json_array_get(results, 0); // 첫 번째 결과 가져오기
+                    const char *key = json_string_value(json_object_get(video, "key"));
+                    const char *site = json_string_value(json_object_get(video, "site"));
 
-            json_t *results = json_object_get(root, "results");
-            if (json_is_array(results) && json_array_size(results) > 0) {
-                json_t *video = json_array_get(results, 0);
-                const char *key = json_string_value(json_object_get(video, "key"));
-                const char *site = json_string_value(json_object_get(video, "site"));
-
-                if (key && strcmp(site, "YouTube") == 0) {
-                    printf("예고편: https://www.youtube.com/watch?v=%s\n", key);
+                    // YouTube 링크 출력
+                    if (key && strcmp(site, "YouTube") == 0) {
+                        printf("예고편: https://www.youtube.com/watch?v=%s\n", key);
+                    } else {
+                        printf("예고편을 찾을 수 없습니다.\n");
+                    }
                 } else {
                     printf("예고편을 찾을 수 없습니다.\n");
                 }
+                json_decref(root); // JSON 객체 해제
             } else {
-                printf("예고편을 찾을 수 없습니다.\n");
+                fprintf(stderr, "JSON decoding failed: %s\n", error.text);
             }
-
-            json_decref(root);
+        } else {
+            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
         }
-
         curl_easy_cleanup(curl);
     }
-
-    free(chunk.memory);
+    free(chunk.memory); // 메모리 해제
     curl_global_cleanup();
 }
 
 // 영화 검색 함수
-void search_movie(const char *api_key, const char *query) {
+void search_movie(const char *api_key, const char *query, int pipe_fd) {
     CURL *curl;
     CURLcode res;
     struct MemoryStruct chunk;
 
-    chunk.memory = malloc(1);
+    chunk.memory = malloc(1); // 초기 메모리 할당
     chunk.size = 0;
 
     // TMDB API URL 설정
@@ -113,93 +84,86 @@ void search_movie(const char *api_key, const char *query) {
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
 
-        // API 요청 실행
+        // CURL 요청 실행
         res = curl_easy_perform(curl);
 
-        if (res != CURLE_OK) {
-            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        if (res == CURLE_OK) {
+            write(pipe_fd, chunk.memory, chunk.size); // 파이프에 결과 쓰기
         } else {
-            json_error_t error;
-            json_t *root = json_loads(chunk.memory, 0, &error);
-
-            if (!root) {
-                fprintf(stderr, "JSON decoding failed: %s\n", error.text);
-                free(chunk.memory);
-                curl_easy_cleanup(curl);
-                return;
-            }
-
-            json_t *results = json_object_get(root, "results");
-            if (json_is_array(results)) {
-                printf("\n--- 검색 결과 ---\n");
-                size_t index;
-                json_t *movie;
-
-                // 영화 목록 출력
-                json_array_foreach(results, index, movie) {
-                    const char *title = json_string_value(json_object_get(movie, "title"));
-
-                    if (title) {
-                        printf("%zu. %s\n", index + 1, title);
-                    }
-                }
-
-                // 번호 선택
-                printf("\n상세 정보를 볼 영화의 번호를 입력하세요: ");
-                size_t choice;
-                scanf("%zu", &choice);
-                getchar();
-
-                if (choice > 0 && choice <= json_array_size(results)) {
-                    movie = json_array_get(results, choice - 1);
-
-                    const char *title = json_string_value(json_object_get(movie, "title"));
-                    const char *overview = json_string_value(json_object_get(movie, "overview"));
-                    const char *release_date = json_string_value(json_object_get(movie, "release_date"));
-                    const char *poster_path = json_string_value(json_object_get(movie, "poster_path"));
-                    int movie_id = json_integer_value(json_object_get(movie, "id"));
-
-                    printf("\n--- 상세 정보 ---\n");
-                    printf("영화 제목: %s\n", title ? title : "정보 없음");
-                    printf("\n");
-                    printf("줄거리: %s\n", overview ? overview : "정보 없음");
-                    printf("\n");
-                    printf("개봉일: %s\n", release_date ? release_date : "정보 없음");
-                    printf("\n");
-
-                    // 포스터 URL 생성
-                    if (poster_path) {
-                        printf("포스터: https://image.tmdb.org/t/p/w500%s\n", poster_path);
-                        printf("\n");
-                    } else {
-                        printf("포스터를 찾을 수 없습니다.\n");
-                    }
-
-                    // 예고편 URL 가져오기
-                    get_movie_trailer(api_key, movie_id);
-                } else {
-                    printf("잘못된 번호입니다.\n");
-                }
-            } else {
-                printf("검색 결과가 없습니다.\n");
-            }
-
-            json_decref(root);
+            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
         }
-
         curl_easy_cleanup(curl);
     }
-
-    free(chunk.memory);
+    free(chunk.memory); // 메모리 해제
     curl_global_cleanup();
 }
 
+// 영화 상세 정보를 표시하는 함수
+void display_movie_details(const char *json_data, const char *api_key) {
+    json_error_t error;
+    json_t *root = json_loads(json_data, 0, &error); // JSON 파싱
 
+    if (!root) {
+        fprintf(stderr, "JSON decoding failed: %s\n", error.text);
+        return;
+    }
 
+    json_t *results = json_object_get(root, "results"); // "results" 배열 가져오기
+    if (json_is_array(results)) {
+        size_t index;
+        json_t *movie;
+
+        printf("\n--- 검색 결과 ---\n");
+        json_array_foreach(results, index, movie) { // 영화 리스트 출력
+            const char *title = json_string_value(json_object_get(movie, "title"));
+            if (title) {
+                printf("%zu. %s\n", index + 1, title);
+            }
+        }
+
+        printf("\n상세 정보를 볼 영화의 번호를 입력하세요: ");
+        size_t choice;
+        scanf("%zu", &choice);
+        getchar();
+
+        if (choice > 0 && choice <= json_array_size(results)) {
+            movie = json_array_get(results, choice - 1);
+            const char *title = json_string_value(json_object_get(movie, "title"));
+            const char *overview = json_string_value(json_object_get(movie, "overview"));
+            const char *release_date = json_string_value(json_object_get(movie, "release_date"));
+            const char *poster_path = json_string_value(json_object_get(movie, "poster_path"));
+            int movie_id = json_integer_value(json_object_get(movie, "id"));
+
+            // 영화 상세 정보 출력
+            printf("\n--- 상세 정보 ---\n");
+            printf("\n");
+            printf("제목: %s\n", title ? title : "정보 없음");
+            printf("\n");
+            printf("줄거리: %s\n", overview ? overview : "정보 없음");
+            printf("\n");
+            printf("개봉일: %s\n", release_date ? release_date : "정보 없음");
+            printf("\n");
+            if (poster_path) {
+                printf("포스터: https://image.tmdb.org/t/p/w500%s\n", poster_path);
+            } else {
+                printf("포스터를 찾을 수 없습니다.\n");
+            }
+            printf("\n");
+
+            // 예고편 정보 가져오기
+            get_movie_trailer(api_key, movie_id);
+        } else {
+            printf("잘못된 번호입니다.\n");
+        }
+    } else {
+        printf("검색 결과가 없습니다.\n");
+    }
+    json_decref(root); // JSON 객체 해제
+}
+
+// 메인 함수
 int main() {
-    // 환경 변수에서 API 키 가져오기
-    char *api_key = getenv("TMDB_API_KEY");
-
+    char *api_key = "3cea7405c8faed2ce6b9df6d5998e853"; // 환경 변수에서 API 키 가져오기
     if (api_key == NULL) {
         printf("API Key not found\n");
         return 1;
@@ -210,8 +174,33 @@ int main() {
     fgets(query, sizeof(query), stdin);
     query[strcspn(query, "\n")] = 0; // 개행 문자 제거
 
-    // 영화 검색 실행
-    search_movie(api_key, query);
+    int pipe_fd[2];
+    if (pipe(pipe_fd) == -1) { // 파이프 생성
+        perror("pipe failed");
+        return 1;
+    }
+
+    pid_t pid = fork(); // 프로세스 분기
+
+    if (pid == -1) {
+        perror("fork failed");
+        return 1;
+    }
+
+    if (pid == 0) { // 자식 프로세스
+        close(pipe_fd[1]); // 쓰기 닫기
+        char buffer[65536];
+        read(pipe_fd[0], buffer, sizeof(buffer)); // 파이프에서 데이터 읽기
+        close(pipe_fd[0]); // 읽기 닫기
+
+        display_movie_details(buffer, api_key); // 영화 상세 정보 표시
+    } else { // 부모 프로세스
+        close(pipe_fd[0]); // 읽기 닫기
+        search_movie(api_key, query, pipe_fd[1]); // 영화 검색 실행
+        close(pipe_fd[1]); // 쓰기 닫기
+
+        wait(NULL); // 자식 프로세스 대기
+    }
 
     return 0;
 }
