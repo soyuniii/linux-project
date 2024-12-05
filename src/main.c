@@ -18,22 +18,30 @@ struct MemoryStruct {
     size_t size;
 };
 
+// 함수 선언
+size_t WriteMemoryCallback(void *ptr, size_t size, size_t nmemb, void *data);
+int get_tmdb_data(Movie **movies, size_t *num_movies);
+void get_trailer_link(Movie *movie);
+void search_movie(const char *api_key, const char *query, char **result_data);
+void display_movie_details(const char *json_data, const char *api_key);
+
+// TMDB API 키 (전역 변수로 설정) -> 개인 API라서 환경변수로 실행하려면 이 코드를 지우면 됨
+const char *api_key = "3cea7405c8faed2ce6b9df6d5998e853";
+
 // 응답 데이터를 저장하는 콜백 함수
 size_t WriteMemoryCallback(void *ptr, size_t size, size_t nmemb, void *data) {
     size_t realsize = size * nmemb;
     struct MemoryStruct *mem = (struct MemoryStruct *)data;
 
-    // 메모리 크기 재할당
-    mem->memory = realloc(mem->memory, mem->size + realsize + 1);  // +1 for null terminator
+    mem->memory = realloc(mem->memory, mem->size + realsize + 1); // +1 for null terminator
     if (mem->memory == NULL) {
         printf("Not enough memory!\n");
         return 0;
     }
 
-    // 응답 데이터를 memory 배열에 복사
     memcpy(&(mem->memory[mem->size]), ptr, realsize);
     mem->size += realsize;
-    mem->memory[mem->size] = 0;  // 문자열 끝에 null terminator 추가
+    mem->memory[mem->size] = 0; // Null terminator 추가
 
     return realsize;
 }
@@ -47,7 +55,7 @@ int get_tmdb_data(Movie **movies, size_t *num_movies) {
     chunk.memory = malloc(1);  // 응답 데이터를 저장할 메모리 할당
     chunk.size = 0;  // 초기화
 
-    const char *api_key = getenv("TMDB_API_KEY");
+    const char *api_key = "3cea7405c8faed2ce6b9df6d5998e853";
     if (api_key == NULL) {
         return 1;
     }
@@ -180,46 +188,133 @@ void get_trailer_link(Movie *movie) {
 }
 
 /********************************** 1. 검색 ***************************************/
+
+// 영화 검색 함수
+void search_movie(const char *api_key, const char *query, char **result_data) {
+    CURL *curl;
+    CURLcode res;
+    struct MemoryStruct chunk;
+
+    chunk.memory = malloc(1); // 초기 메모리 할당
+    chunk.size = 0;
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    curl = curl_easy_init();
+
+    if (curl) {
+        // URL 인코딩
+        char *encoded_query = curl_easy_escape(curl, query, 0);
+        if (!encoded_query) {
+            fprintf(stderr, "URL 인코딩 실패\n");
+            curl_easy_cleanup(curl);
+            return;
+        }
+
+        // TMDB API URL 설정
+        char url[512];
+        snprintf(url, sizeof(url), "https://api.themoviedb.org/3/search/movie?api_key=%s&query=%s&language=ko-KR", api_key, encoded_query);
+
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+
+        // CURL 요청 실행
+        res = curl_easy_perform(curl);
+
+        if (res == CURLE_OK) {
+            *result_data = strdup(chunk.memory); // 결과 저장
+        } else {
+            fprintf(stderr, "curl_easy_perform() 실패: %s\n", curl_easy_strerror(res));
+        }
+
+        curl_free(encoded_query); // URL 인코딩된 문자열 해제
+        curl_easy_cleanup(curl);
+    }
+    free(chunk.memory); // 메모리 해제
+    curl_global_cleanup();
+}
+
+// 영화 상세 정보 출력 함수
+void display_movie_details(const char *json_data, const char *api_key) {
+    json_error_t error;
+    json_t *root = json_loads(json_data, 0, &error); // JSON 파싱
+
+    if (!root) {
+        fprintf(stderr, "JSON decoding failed: %s\n", error.text);
+        return;
+    }
+
+    json_t *results = json_object_get(root, "results"); // "results" 배열 가져오기
+    if (json_is_array(results)) {
+        size_t index;
+        json_t *movie;
+
+        printf("\n--- 검색 결과 ---\n");
+        json_array_foreach(results, index, movie) { // 영화 리스트 출력
+            const char *title = json_string_value(json_object_get(movie, "title"));
+            if (title) {
+                printf("%zu. %s\n", index + 1, title);
+            }
+        }
+
+        printf("\n상세 정보를 볼 영화의 번호를 입력하세요: ");
+        size_t choice;
+        scanf("%zu", &choice);
+        getchar();
+
+        if (choice > 0 && choice <= json_array_size(results)) {
+            movie = json_array_get(results, choice - 1);
+            const char *title = json_string_value(json_object_get(movie, "title"));
+            const char *overview = json_string_value(json_object_get(movie, "overview"));
+            const char *release_date = json_string_value(json_object_get(movie, "release_date"));
+            const char *poster_path = json_string_value(json_object_get(movie, "poster_path"));
+            int movie_id = json_integer_value(json_object_get(movie, "id"));
+
+            // 영화 상세 정보 출력
+            printf("\n--- 상세 정보 ---\n");
+            printf("\n");
+            printf("제목: %s\n", title ? title : "정보 없음");
+            printf("\n");
+            printf("줄거리: %s\n", overview ? overview : "정보 없음");
+            printf("\n");
+            printf("개봉일: %s\n", release_date ? release_date : "정보 없음");
+            printf("\n");
+            if (poster_path) {
+                printf("포스터: https://image.tmdb.org/t/p/w500%s\n", poster_path);
+            } else {
+                printf("포스터를 찾을 수 없습니다.\n");
+            }
+            printf("\n");
+
+            
+        } else {
+            printf("잘못된 번호입니다.\n");
+        }
+    } else {
+        printf("검색 결과가 없습니다.\n");
+    }
+    json_decref(root); // JSON 객체 해제
+}
+
+// 검색 메뉴 함수
 void show_search_menu(Movie *movies, size_t num_movies) {
     char query[256];
     printf("\n검색할 영화 제목을 입력하세요: ");
     fgets(query, sizeof(query), stdin);
     query[strcspn(query, "\n")] = 0; // 개행 문자 제거
 
-    int found = 0;
+    char *json_data = NULL;
+    search_movie(api_key, query, &json_data); // 전역 변수로 설정된 API 키 사용
 
-    // 검색 결과 출력
-    for (size_t i = 0; i < num_movies; i++) {
-        if (strstr(movies[i].title, query) != NULL) {
-            printf("%zu. %s\n", i + 1, movies[i].title);
-            found = 1;
-        }
-    }
-
-    if (!found) {
-        printf("검색된 영화가 없습니다.\n");
-    } else {
-        printf("\n상세 정보를 볼 영화의 번호를 입력하세요: ");
-        size_t choice;
-        scanf("%zu", &choice);
-        getchar();
-
-        if (choice > 0 && choice <= num_movies) {
-            Movie selected_movie = movies[choice - 1];
-            printf("\n영화 제목: %s\n", selected_movie.title);
-            get_trailer_link(&selected_movie);
-            if (selected_movie.trailer_link) {
-                printf("예고편 링크: %s\n", selected_movie.trailer_link);
-            } else {
-                printf("예고편을 찾을 수 없습니다.\n");
-            }
-        } else {
-            printf("잘못된 번호입니다.\n");
-        }
+    if (json_data) {
+        display_movie_details(json_data, api_key);
+        free(json_data);
     }
 }
 
 /********************************** 2. 오늘의 영화 ***************************************/
+
+// 추천 영화 출력 함수
 void show_recommend_movie(Movie *movies, size_t num_movies) {
     if (num_movies == 0) {
         printf("영화를 가져올 수 없습니다.\n");
@@ -231,9 +326,9 @@ void show_recommend_movie(Movie *movies, size_t num_movies) {
     int random_index = rand() % num_movies;
 
     // 추천 영화 출력
-    printf("\n\n--------------------------------------\n");
+    printf("\n\n———————————————————\n");
     printf("오늘의 추천 영화 😊\n");
-    printf("--------------------------------------\n");
+    printf("———————————————————\n");
     printf("오늘 '%s', 어떠세요?\n", movies[random_index].title);
 
     // 예고편 링크 출력
@@ -248,14 +343,13 @@ void show_recommend_movie(Movie *movies, size_t num_movies) {
 
 /********************************** main함수 ***************************************/
 
+// main 함수
 int main() {
     int choice;
+    Movie *movies = NULL;
+    size_t num_movies = 0;
 
-    // 영화 목록과 개수 선언
-    Movie *movies = NULL;  // 영화 목록을 저장할 배열
-    size_t num_movies = 0; // 영화 개수
-
-    // TMDB API에서 영화 목록을 가져옵니다.
+    // 영화 데이터를 가져옵니다.
     if (get_tmdb_data(&movies, &num_movies) != 0) {
         printf("영화 데이터를 가져오는 데 실패했습니다.\n");
         return 1;
@@ -270,10 +364,11 @@ int main() {
         printf("3. 나중에 볼 영화목록\n");
         printf("4. 영화 감상 게시판\n");
         printf("5. 나가기\n");
-        printf("-----------------------------------------\n");
+        printf("————————————————————\n");
         printf("메뉴를 선택하세요 >>> ");
 
         scanf("%d", &choice);
+        getchar(); // 버퍼 정리
 
         switch (choice) {
             case 1:
@@ -283,21 +378,21 @@ int main() {
                 show_recommend_movie(movies, num_movies);
                 break;
             case 3:
-                //show_movie_list();
+                // TODO: 나중에 볼 영화목록 기능 추가
                 break;
             case 4:
-                //show_review_board();
+                // TODO: 영화 감상 게시판 기능 추가
                 break;
             case 5:
                 printf("프로그램을 종료합니다.\n");
-                return 0; // 프로그램 종료
+                return 0;
             default:
                 printf("잘못된 입력입니다. 다시 시도해주세요.\n");
         }
 
         printf("\n계속하시겠습니까? (Y/N): ");
         char cont;
-        scanf(" %c", &cont);  // 여백을 추가하여 버퍼 문제 방지
+        scanf(" %c", &cont); // 여백 추가로 버퍼 문제 방지
         if (cont == 'N' || cont == 'n') {
             break;
         }
