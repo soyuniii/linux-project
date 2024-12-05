@@ -69,9 +69,6 @@ int get_tmdb_data(Movie **movies, size_t *num_movies) {
             fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
             return 1;
         } else {
-            // 응답 받은 데이터 출력
-            // printf("Response: %s\n", chunk.memory);
-
             // JSON 파싱
             json_error_t error;
             json_t *root = json_loads(chunk.memory, 0, &error);
@@ -183,11 +180,43 @@ void get_trailer_link(Movie *movie) {
 }
 
 /********************************** 1. 검색 ***************************************/
-void show_search_menu() {
-    printf("\n\n------------------------------------\n");
-    printf("영화 검색:\n");
-    printf("-------------------------------------\n");
-    // 검색 기능 구현
+void show_search_menu(Movie *movies, size_t num_movies) {
+    char query[256];
+    printf("\n검색할 영화 제목을 입력하세요: ");
+    fgets(query, sizeof(query), stdin);
+    query[strcspn(query, "\n")] = 0; // 개행 문자 제거
+
+    int found = 0;
+
+    // 검색 결과 출력
+    for (size_t i = 0; i < num_movies; i++) {
+        if (strstr(movies[i].title, query) != NULL) {
+            printf("%zu. %s\n", i + 1, movies[i].title);
+            found = 1;
+        }
+    }
+
+    if (!found) {
+        printf("검색된 영화가 없습니다.\n");
+    } else {
+        printf("\n상세 정보를 볼 영화의 번호를 입력하세요: ");
+        size_t choice;
+        scanf("%zu", &choice);
+        getchar();
+
+        if (choice > 0 && choice <= num_movies) {
+            Movie selected_movie = movies[choice - 1];
+            printf("\n영화 제목: %s\n", selected_movie.title);
+            get_trailer_link(&selected_movie);
+            if (selected_movie.trailer_link) {
+                printf("예고편 링크: %s\n", selected_movie.trailer_link);
+            } else {
+                printf("예고편을 찾을 수 없습니다.\n");
+            }
+        } else {
+            printf("잘못된 번호입니다.\n");
+        }
+    }
 }
 
 /********************************** 2. 오늘의 영화 ***************************************/
@@ -217,17 +246,6 @@ void show_recommend_movie(Movie *movies, size_t num_movies) {
     }
 }
 
-/********************************** 3.나중에 볼 영화 목록 ***************************************/
-void show_movie_list() {
-    printf("\n나중에 볼 영화목록\n");
-    // 나중에 볼 영화 목록 기능 구현
-}
-
-void show_review_board() {
-    printf("\n영화 감상 게시판\n");
-    // 영화 감상 게시판 관련 기능
-}
-
 /********************************** main함수 ***************************************/
 
 int main() {
@@ -243,9 +261,7 @@ int main() {
         return 1;
     }
 
-
-    while(1) {
-       
+    while (1) {
         printf("\n========================================\n");
         printf("    ◆ MOVIE PLACE에 오신 분들, 환영합니다. \n");
         printf("========================================\n");
@@ -256,21 +272,21 @@ int main() {
         printf("5. 나가기\n");
         printf("-----------------------------------------\n");
         printf("메뉴를 선택하세요 >>> ");
-        
+
         scanf("%d", &choice);
 
         switch (choice) {
             case 1:
-                show_search_menu();
+                show_search_menu(movies, num_movies);
                 break;
             case 2:
                 show_recommend_movie(movies, num_movies);
                 break;
             case 3:
-                show_movie_list();
+                //show_movie_list();
                 break;
             case 4:
-                show_review_board();
+                //show_review_board();
                 break;
             case 5:
                 printf("프로그램을 종료합니다.\n");
