@@ -162,6 +162,14 @@ void display_movie_details(const char *json_data, const char *api_key) {
             }
             printf("\n");
 
+            // 찜하기 여부 묻기
+            char save_choice;
+            printf("\n이 영화를 찜하시겠습니까? (Y/N): ");
+            scanf(" %c", &save_choice);
+            if (save_choice == 'Y' || save_choice == 'y') {
+                save_movie_to_profile(title);
+            }
+
             // 예고편 정보 가져오기
             get_movie_trailer(api_key, movie_id);
         } else {
