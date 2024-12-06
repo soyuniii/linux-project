@@ -25,6 +25,7 @@ void get_trailer_link(Movie *movie);
 void search_movie(const char *api_key, const char *query, char **result_data);
 void display_movie_details(const char *json_data, const char *api_key);
 void show_recommend_movie(Movie *movies, size_t num_movies);
+void get_latest_movies(Movie **movies, size_t *num_movies);
 int is_movie_in_profile(const char *movie_title);
 void save_movie_to_profile(const char *movie_title);
 void load_movies_from_profile();
@@ -257,7 +258,7 @@ void display_movie_details(const char *json_data, const char *api_key) {
         size_t index;
         json_t *movie;
 
-        printf("\n--- 검색 결과 ---\n");
+        printf("\n------------------------------ 검색 결과 ---------------------------------\n");
         json_array_foreach(results, index, movie) { // 영화 리스트 출력
             const char *title = json_string_value(json_object_get(movie, "title"));
             if (title) {
@@ -279,24 +280,22 @@ void display_movie_details(const char *json_data, const char *api_key) {
             int movie_id = json_integer_value(json_object_get(movie, "id"));
 
             // 영화 상세 정보 출력
-            printf("\n--- 상세 정보 ---\n");
+            printf("\n--------------------------------- 영화 상세 정보 -------------------------------------\n");
             printf("\n");
-            printf("제목: %s\n", title ? title : "정보 없음");
+            printf(" 제목   | %s\n", title ? title : "정보 없음");
             printf("\n");
-            printf("줄거리: %s\n", overview ? overview : "정보 없음");
+            printf(" 개봉일 | %s\n", release_date ? release_date : "정보 없음");
             printf("\n");
-            printf("개봉일: %s\n", release_date ? release_date : "정보 없음");
+            printf(" 줄거리 | \n\n %s\n", overview ? overview : "정보 없음");
             printf("\n");
             if (poster_path) {
-                printf("포스터: https://image.tmdb.org/t/p/w500%s\n", poster_path);
-            } else {
-                printf("포스터를 찾을 수 없습니다.\n");
+                printf(" 포스터 | https://image.tmdb.org/t/p/w500%s\n", poster_path);
             }
             printf("\n");
 
             // 찜하기 여부 묻기
             char save_choice;
-            printf("\n이 영화를 찜하시겠습니까? (Y/N): ");
+            printf("\n\n\n이 영화를 찜하시겠습니까? (Y/N): ");
             scanf(" %c", &save_choice);
             if (save_choice == 'Y' || save_choice == 'y') {
                 save_movie_to_profile(title);
@@ -314,7 +313,7 @@ void display_movie_details(const char *json_data, const char *api_key) {
 // 검색 메뉴 함수
 void show_search_menu(Movie *movies, size_t num_movies) {
     char query[256];
-    printf("\n검색할 영화 제목을 입력하세요: ");
+    printf("\n🔎 검색할 영화 제목을 입력하세요: ");
     fgets(query, sizeof(query), stdin);
     query[strcspn(query, "\n")] = 0; // 개행 문자 제거
 
@@ -329,6 +328,7 @@ void show_search_menu(Movie *movies, size_t num_movies) {
 
 /********************************** 2. 오늘의 영화 ***************************************/
 
+
 // 추천 영화 출력 함수
 void show_recommend_movie(Movie *movies, size_t num_movies) {
     if (num_movies == 0) {
@@ -340,23 +340,121 @@ void show_recommend_movie(Movie *movies, size_t num_movies) {
     srand(time(NULL));
     int random_index = rand() % num_movies;
 
-    // 추천 영화 출력
-    printf("\n\n———————————————————\n");
-    printf("오늘의 추천 영화 😊\n");
-    printf("———————————————————\n");
-    printf("오늘 '%s', 어떠세요?\n", movies[random_index].title);
+    printf("\n\n오늘 '%s', 어떠세요?\n", movies[random_index].title);
 
     // 예고편 링크 출력
     get_trailer_link(&movies[random_index]);
     if (movies[random_index].trailer_link != NULL) {
         printf("\n▼ 예고편을 감상해보세요! \n");
         printf("%s\n", movies[random_index].trailer_link);
-    } else {
-        printf("이 영화는 예고편이 제공되어있지 않아요 ㅜ.ㅜ.\n");
+    } 
+
+    
+}
+/********************************** 3. 최신 영화  ***************************************/
+
+// 최신 영화 가져오는 함수
+void get_latest_movies(Movie **latest_movies, size_t *num_latest_movies) {
+    CURL *curl;
+    CURLcode res;
+    struct MemoryStruct chunk;
+
+    chunk.memory = malloc(1);  // 응답 데이터를 저장할 메모리 할당
+    chunk.size = 0;  // 초기화
+
+    if (api_key == NULL) {
+        printf("API Key not found\n");
+        return;
     }
+
+    const char *url = "https://api.themoviedb.org/3/movie/popular?api_key=%s&language=ko-KR";
+    char full_url[512];
+    snprintf(full_url, sizeof(full_url), url, api_key);  // api_key를 포함한 URL 완성
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    curl = curl_easy_init();
+
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, full_url);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &chunk);
+
+        res = curl_easy_perform(curl);
+
+        if (res != CURLE_OK) {
+            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+            return;
+        } else {
+            // JSON 파싱
+            json_error_t error;
+            json_t *root = json_loads(chunk.memory, 0, &error);
+
+            if (!root) {
+                fprintf(stderr, "JSON decoding failed: %s\n", error.text);
+                free(chunk.memory);
+                return;
+            }
+
+            json_t *results = json_object_get(root, "results");
+            if (json_is_array(results)) {
+                *num_latest_movies = json_array_size(results);
+                *latest_movies = malloc(*num_latest_movies * sizeof(Movie));
+                if (*latest_movies == NULL) {
+                    fprintf(stderr, "Memory allocation failed for movies\n");
+                    json_decref(root);
+                    return;
+                }
+
+                for (size_t i = 0; i < *num_latest_movies; i++) {
+                    json_t *movie_json = json_array_get(results, i);
+                    const char *title = json_string_value(json_object_get(movie_json, "title"));
+                    int id = (int)json_integer_value(json_object_get(movie_json, "id"));
+
+                    // 영화 제목과 ID를 latest_movies 배열에 저장
+                    (*latest_movies)[i].title = strdup(title);
+                    (*latest_movies)[i].id = id;
+                    if ((*latest_movies)[i].title == NULL) {
+                        fprintf(stderr, "Memory allocation failed for movie title at index %zu\n", i);
+                        json_decref(root);
+                        return;
+                    }
+
+                    (*latest_movies)[i].trailer_link = NULL;
+                }
+            }
+
+            json_decref(root);
+        }
+
+        curl_easy_cleanup(curl);
+    }
+
+    free(chunk.memory);
+    curl_global_cleanup();
 }
 
-/********************************** 3.나중에 볼 영화 목록 ***************************************/
+// 최신 영화  출력하는 함수
+void show_latest_movies() {
+    Movie *latest_movies = NULL;
+    size_t num_latest_movies = 0;
+
+    // 최신 영화 가져오기
+    get_latest_movies(&latest_movies, &num_latest_movies);
+
+    if (num_latest_movies > 0) {
+        printf("\n[ 최근 개봉 영화 TOP 20 ]\n\n");
+        for (size_t i = 0; i < num_latest_movies; i++) {
+            printf("%zu. %s\n", i + 1, latest_movies[i].title);
+        }
+    } else {
+        printf("최신 영화를 가져오는 데 실패했습니다.\n");
+    }
+
+    // 최신 영화 목록에 대한 메모리 해제
+    free(latest_movies);
+}
+
+/********************************** 4.나중에 볼 영화 목록 ***************************************/
 
 // 중복 저장 방지
 int is_movie_in_profile(const char *movie_title) {
@@ -399,10 +497,10 @@ void load_movies_from_profile() {
         char movie_title[256];
         int movie_count = 0;
 
-        printf("나의 찜하기 목록:\n");
+        printf("\n\n🛒 나의 찜하기 목록 \n\n");
         while (fgets(movie_title, sizeof(movie_title), file)) {
             movie_count++;
-            printf("%s", movie_title);
+            printf("‣ %s", movie_title);
         }
         fclose(file);
 
@@ -545,13 +643,14 @@ void show_movie_list() {
                 edit_movies_in_profile();
                 break;
             case 3:
-                printf("프로그램을 종료합니다.\n");
+                printf("메인 화면으로 돌아갑니다.\n");
                 return;
             default:
                 printf("잘못된 옵션입니다. 다시 시도해주세요.\n");
         }
     }
 }
+
 
 /********************************** main함수 ***************************************/
 
@@ -568,18 +667,20 @@ int main() {
     }
 
     while (1) {
-        printf("\n========================================\n");
-        printf("    ◆ MOVIE PLACE에 오신 분들, 환영합니다. \n");
-        printf("========================================\n");
-        printf("1. 검색\n");
+        printf("\n==================================================\n");
+        printf("     MOVIE PLACE에 오신 분들, 환영합니다. \n");
+        printf("==================================================\n");
+        printf("1. 검색 \n");
         printf("2. 오늘의 추천 영화\n");
-        printf("3. 나중에 볼 영화목록\n");
-        printf("4. 나가기\n");
-        printf("————————————————————\n");
+        printf("3. 최신 개봉 영화 20\n");
+        printf("4. 나중에 볼 영화목록\n");
+        printf("5. 나가기\n");
+        printf("————————————————————------------------------------\n");
         printf("메뉴를 선택하세요 >>> ");
 
         scanf("%d", &choice);
         getchar(); // 버퍼 정리
+        printf("---------------------------------------------------\n");
 
         switch (choice) {
             case 1:
@@ -589,16 +690,19 @@ int main() {
                 show_recommend_movie(movies, num_movies);
                 break;
             case 3:
-                show_movie_list();
+                show_latest_movies();
                 break;
             case 4:
-                printf("프로그램을 종료합니다.\n");
+                show_movie_list();
+                return 0;
+            case 5:
+                printf("MOVIE PLACE 을(를) 종료합니다.\n");
                 return 0;
             default:
                 printf("잘못된 입력입니다. 다시 시도해주세요.\n");
         }
 
-        printf("\n계속하시겠습니까? (Y/N): ");
+        printf("\n메인화면으로 돌아가시겠습니까? (y/n): ");
         char cont;
         scanf(" %c", &cont); // 여백 추가로 버퍼 문제 방지
         if (cont == 'N' || cont == 'n') {
@@ -606,6 +710,6 @@ int main() {
         }
     }
 
-    printf("프로그램을 종료합니다.\n");
+    printf("MOVIE PLACE 을(를) 종료합니다.\n");
     return 0;
 }
