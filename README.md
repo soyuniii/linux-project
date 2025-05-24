@@ -1,12 +1,12 @@
-***영화 추천 프로그램 입니당***
+***리눅스 영화 추천 프로그램***
 
 **컴파일 방법**
-gcc -o 실행파일명 src/소스파일 -lcurl -ljansson (라이브러리 항상 포함시키기)
+gcc -o 실행파일명 src/소스파일 -lcurl -ljansson (라이브러리 항상 포함)
 
 예시
 gcc -o main src/main.c -lcurl -ljansson
 
-헤더파일 포함시켜서 컴파일*
+헤더파일 포함시켜 컴파일*
 gcc -o reco src/client.c src/recommend_movie.c -I include -lcurl -ljansson
 
 
